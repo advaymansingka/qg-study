@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 
-def bradley_terry_leaderboard(db_path, data_path, regularization=1.0, max_iter=100, tol=1e-6):
+def bradley_terry_leaderboard(db_path, data_path, regularization=1.0, max_iter=500, tol=1e-6):
     # Load questions
     questions = pd.read_parquet(data_path).reset_index()
     n = len(questions)
