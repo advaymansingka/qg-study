@@ -23,11 +23,18 @@ Single-file Streamlit app (`streamlit_app.py`) with SQLite persistence.
 - `logged_in` — login gate
 - `active_qb` — currently selected question bank name
 - `current_pair` — list of 2 question dicts being displayed
-- `previous_pair` — one level of undo for Next navigation
+- `previous_pair` — one level of undo for Previous navigation
 - `answered` — `set` of question indices already marked correct/wrong in current display
+- `answer_choices` — `dict` mapping question index to `"correct"` or `"wrong"`
 - `pending_comparison` — `{"label": str, "result": str}` or `None`; drives the `@st.dialog` confirmation modal
-- `confirm_clear` — bool for the two-step Clear All History confirmation
+- `compared_pairs` — `set` of `frozenset({a_idx, b_idx})` pairs already compared this session
+- `comparison_chosen` — `dict` mapping `frozenset({a_idx, b_idx})` to the chosen result value
+- `confirm_clear_attempts` — bool for the two-step Clear All Attempts confirmation
+- `confirm_clear_comparisons` — bool for the two-step Clear All Comparisons confirmation
+- `qbank_pos` — current position (int) in the Question Bank tab selectbox
 
 **Tabs:** Study | Question Bank | Analytics | Database | Debug
+
+**Analytics tab:** Currently shows a placeholder ("Analytics coming soon").
 
 **Adding a new question bank:** Add `data/{name}.parquet` (columns: `name`, `prompt`, `explanation`) and add `"{name}"` to the `qb_options` list in the Question Bank tab.

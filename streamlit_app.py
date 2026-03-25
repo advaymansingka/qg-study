@@ -1,3 +1,4 @@
+import random
 import sqlite3
 from datetime import datetime
 
@@ -5,7 +6,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-st.set_page_config(layout="wide", page_title="QG Study")
+st.set_page_config(layout="wide", page_title="QG Study", page_icon=":books:")
 
 USERNAME = "user"
 PASSWORD = "pass123"
@@ -109,6 +110,8 @@ if "answer_choices" not in st.session_state:
     st.session_state.answer_choices = {}
 if "comparison_chosen" not in st.session_state:
     st.session_state.comparison_chosen = {}
+if "qbank_pos" not in st.session_state:
+    st.session_state.qbank_pos = 0
 
 # --- Comparison dialog ---
 @st.dialog("Confirm Comparison")
@@ -166,13 +169,14 @@ with study_tab:
         color: #1e7e34 !important;
     }
     div[data-testid="stButton"] > button[kind="primary"]:hover:not(:disabled) {
-        background-color: #e8f5e9 !important;
+        background-color: rgba(30, 126, 52, 0.2) !important;
         border-color: #1e7e34 !important;
+        filter: none !important;
     }
     </style>
     """, unsafe_allow_html=True)
 
-    col1, col2 = st.columns(2)
+    col1, _, col2 = st.columns([10, 1, 10])
     for col, row in zip([col1, col2], st.session_state.current_pair):
         with col:
             idx = row["index"]
@@ -246,6 +250,17 @@ function styleWrongBtns() {
         if (btn.innerText.trim().startsWith('\u2717 Wrong')) {
             btn.style.color = '#dc3545';
             btn.style.borderColor = '#dc3545';
+            btn.style.transition = 'background-color 0.15s ease, box-shadow 0.15s ease';
+            if (!btn._wrongHoverBound) {
+                btn.addEventListener('mouseenter', function() {
+                    btn.style.backgroundColor = 'rgba(220, 53, 69, 0.2)';
+                    btn.style.filter = 'none';
+                });
+                btn.addEventListener('mouseleave', function() {
+                    btn.style.backgroundColor = 'transparent';
+                });
+                btn._wrongHoverBound = true;
+            }
         }
     });
 }
@@ -275,19 +290,72 @@ setTimeout(styleWrongBtns, 100);
 # ── Question Bank tab ──
 with qbank_tab:
     qb_options = ["example"]
-    new_qb = st.selectbox("Question Bank", qb_options, index=qb_options.index(qb), key="qb_selector")
+    new_qb = st.selectbox("Question Bank", qb_options, index=qb_options.index(qb), key="qb_selector", format_func=str.title)
     if new_qb != qb:
         st.session_state.active_qb = new_qb
         st.rerun()
 
-    options = {f"{row['index']}. {row['name']}": row for row in df.to_dict("records")}
-    selection = st.selectbox("Select a question", list(options.keys()))
-    if selection:
-        row = options[selection]
+    filtered_df = df.reset_index(drop=True)
+    total_all = len(df)
+    total_filtered = total_all
+
+    st.caption(f"{total_all} questions")
+
+    if total_filtered == 0:
+        st.warning("No questions available.")
+    else:
+        # Clamp pos to valid range (e.g. after search narrows results)
+        qbank_pos = st.session_state.qbank_pos
+        if qbank_pos >= total_filtered:
+            qbank_pos = 0
+            st.session_state.qbank_pos = 0
+
+        # ── Selectbox (synced to pos) ──
+        options_list = [f"{row['index']}. {row['name']}" for _, row in filtered_df.iterrows()]
+        selected_label = st.selectbox("Select a question", options_list, index=qbank_pos, key="qbank_selectbox")
+        new_pos = options_list.index(selected_label)
+        if new_pos != qbank_pos:
+            st.session_state.qbank_pos = new_pos
+            st.rerun()
+
+        # ── Prev / Random / Next buttons ──
+        nav1, nav2, nav3 = st.columns([1, 1, 1])
+        with nav1:
+            if st.button("← Prev", key="qbank_prev", disabled=(qbank_pos == 0), use_container_width=True):
+                st.session_state.qbank_pos -= 1
+                st.rerun()
+        with nav2:
+            if st.button("Random", key="qbank_random", use_container_width=True):
+                st.session_state.qbank_pos = random.randint(0, total_filtered - 1)
+                st.rerun()
+        with nav3:
+            if st.button("Next →", key="qbank_next", disabled=(qbank_pos == total_filtered - 1), use_container_width=True):
+                st.session_state.qbank_pos += 1
+                st.rerun()
+
+        # ── Display selected question ──
+        row = filtered_df.iloc[qbank_pos]
         st.header(f"{row['index']}. {row['name']}")
         st.markdown(row["prompt"])
-        st.markdown("**Explanation:**")
-        st.markdown(row["explanation"])
+
+        # ── Explanation (collapsed) ──
+        with st.expander("Explanation"):
+            st.markdown(row["explanation"])
+
+        # ── Attempt history ──
+        conn = get_conn(db_path)
+        attempt_row = conn.execute(
+            "SELECT COUNT(*), MAX(timestamp) FROM attempts WHERE question_index = ?",
+            (int(row["index"]),)
+        ).fetchone()
+        conn.close()
+        count, last_ts = attempt_row
+        if count and count > 0:
+            last_dt = datetime.fromisoformat(last_ts)
+            last_str = last_dt.strftime("%b %d, %Y  %I:%M %p")
+            st.caption(f"{count} attempt{'s' if count != 1 else ''} · Last: {last_str}")
+        else:
+            st.caption("No attempts yet")
 
 # ── Analytics tab ──
 with analytics_tab:
