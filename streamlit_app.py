@@ -3,6 +3,7 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 st.set_page_config(layout="wide", page_title="QG Study")
 
@@ -58,15 +59,17 @@ if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
 if not st.session_state.logged_in:
-    st.title("Login")
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-    if st.button("Login"):
-        if username == USERNAME and password == PASSWORD:
-            st.session_state.logged_in = True
-            st.rerun()
-        else:
-            st.error("Invalid credentials")
+    _, login_col, _ = st.columns([2, 1, 2])
+    with login_col:
+        st.title("Login")
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        if st.button("Login", use_container_width=True):
+            if username == USERNAME and password == PASSWORD:
+                st.session_state.logged_in = True
+                st.rerun()
+            else:
+                st.error("Invalid credentials")
     st.stop()
 
 # --- Active QB (set from Question Bank tab) ---
@@ -102,6 +105,10 @@ if "confirm_clear_attempts" not in st.session_state:
     st.session_state.confirm_clear_attempts = False
 if "confirm_clear_comparisons" not in st.session_state:
     st.session_state.confirm_clear_comparisons = False
+if "answer_choices" not in st.session_state:
+    st.session_state.answer_choices = {}
+if "comparison_chosen" not in st.session_state:
+    st.session_state.comparison_chosen = {}
 
 # --- Comparison dialog ---
 @st.dialog("Confirm Comparison")
@@ -113,7 +120,9 @@ def show_confirm_dialog():
         if st.button("Confirm"):
             row_a, row_b = st.session_state.current_pair
             log_comparison(db_path, row_a, row_b, pending["result"])
-            st.session_state.compared_pairs.add(frozenset({row_a["index"], row_b["index"]}))
+            _pair_key = frozenset({row_a["index"], row_b["index"]})
+            st.session_state.compared_pairs.add(_pair_key)
+            st.session_state.comparison_chosen[_pair_key] = pending["result"]
             st.session_state.pending_comparison = None
             st.rerun()
     with ccol2:
@@ -150,15 +159,15 @@ with study_tab:
         opacity: 0.35;
         cursor: not-allowed;
     }
-    /* Correct button — green */
+    /* Correct button — green text, transparent bg */
     div[data-testid="stButton"] > button[kind="primary"] {
-        background-color: #1e7e34 !important;
-        border-color: #1e7e34 !important;
-        color: #ffffff !important;
+        background-color: transparent !important;
+        border: 2px solid #1e7e34 !important;
+        color: #1e7e34 !important;
     }
     div[data-testid="stButton"] > button[kind="primary"]:hover:not(:disabled) {
-        background-color: #25a244 !important;
-        border-color: #25a244 !important;
+        background-color: #e8f5e9 !important;
+        border-color: #1e7e34 !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -173,19 +182,33 @@ with study_tab:
                 st.markdown(row["explanation"])
 
             already_answered = idx in st.session_state.answered
+            chosen = st.session_state.answer_choices.get(idx)
             bcol1, bcol2 = st.columns(2)
-            with bcol1:
-                if st.button("✓ Correct", key=f"correct_{idx}", disabled=already_answered,
-                             type="primary", use_container_width=True):
-                    log_attempt(db_path, idx, row["name"], "correct")
-                    st.session_state.answered.add(idx)
-                    st.rerun()
-            with bcol2:
-                if st.button("✗ Wrong", key=f"wrong_{idx}", disabled=already_answered,
-                             use_container_width=True):
-                    log_attempt(db_path, idx, row["name"], "wrong")
-                    st.session_state.answered.add(idx)
-                    st.rerun()
+            _S = "border-radius:8px;font-weight:600;font-size:0.95rem;padding:0.45rem 1rem;text-align:center;width:100%;display:block;box-sizing:border-box;"
+            if already_answered:
+                with bcol1:
+                    if chosen == "correct":
+                        st.markdown(f'<div style="{_S}background:#1e7e34;color:white;border:2px solid #1e7e34;">✓ Correct</div>', unsafe_allow_html=True)
+                    else:
+                        st.markdown(f'<div style="{_S}background:transparent;color:#aaa;border:2px solid #ccc;opacity:0.4;">✓ Correct</div>', unsafe_allow_html=True)
+                with bcol2:
+                    if chosen == "wrong":
+                        st.markdown(f'<div style="{_S}background:#dc3545;color:white;border:2px solid #dc3545;">✗ Wrong</div>', unsafe_allow_html=True)
+                    else:
+                        st.markdown(f'<div style="{_S}background:transparent;color:#aaa;border:2px solid #ccc;opacity:0.4;">✗ Wrong</div>', unsafe_allow_html=True)
+            else:
+                with bcol1:
+                    if st.button("✓ Correct", key=f"correct_{idx}", type="primary", use_container_width=True):
+                        log_attempt(db_path, idx, row["name"], "correct")
+                        st.session_state.answered.add(idx)
+                        st.session_state.answer_choices[idx] = "correct"
+                        st.rerun()
+                with bcol2:
+                    if st.button("✗ Wrong", key=f"wrong_{idx}", use_container_width=True):
+                        log_attempt(db_path, idx, row["name"], "wrong")
+                        st.session_state.answered.add(idx)
+                        st.session_state.answer_choices[idx] = "wrong"
+                        st.rerun()
 
     # Comparison buttons
     st.divider()
@@ -199,13 +222,36 @@ with study_tab:
         (f"B ({b_idx}) much harder", "B_much_harder"),
     ]
     already_compared = frozenset({a_idx, b_idx}) in st.session_state.compared_pairs
+    chosen_cmp = st.session_state.comparison_chosen.get(frozenset({a_idx, b_idx}))
+    _S = "border-radius:8px;font-weight:600;font-size:0.95rem;padding:0.45rem 1rem;text-align:center;width:100%;display:block;box-sizing:border-box;"
     cmp_cols = st.columns(5)
-    for col, (label, result_val) in zip(cmp_cols, comparisons):
-        with col:
-            if st.button(label, key=f"cmp_{result_val}_{a_idx}_{b_idx}",
-                         disabled=already_compared, use_container_width=True):
-                st.session_state.pending_comparison = {"label": label, "result": result_val}
-                st.rerun()
+    if already_compared:
+        for col, (label, result_val) in zip(cmp_cols, comparisons):
+            with col:
+                if result_val == chosen_cmp:
+                    st.markdown(f'<div style="{_S}background:#0d6efd;color:white;border:2px solid #0d6efd;">{label}</div>', unsafe_allow_html=True)
+                else:
+                    st.markdown(f'<div style="{_S}background:transparent;color:#aaa;border:2px solid #ccc;opacity:0.4;">{label}</div>', unsafe_allow_html=True)
+    else:
+        for col, (label, result_val) in zip(cmp_cols, comparisons):
+            with col:
+                if st.button(label, key=f"cmp_{result_val}_{a_idx}_{b_idx}", use_container_width=True):
+                    st.session_state.pending_comparison = {"label": label, "result": result_val}
+                    st.rerun()
+
+    # JS: style Wrong buttons red (pre-selection only — post-selection uses HTML divs)
+    components.html("""<script>
+function styleWrongBtns() {
+    window.parent.document.querySelectorAll('[data-testid="stButton"] button').forEach(function(btn) {
+        if (btn.innerText.trim().startsWith('\u2717 Wrong')) {
+            btn.style.color = '#dc3545';
+            btn.style.borderColor = '#dc3545';
+        }
+    });
+}
+styleWrongBtns();
+setTimeout(styleWrongBtns, 100);
+</script>""", height=0)
 
     # Navigation
     st.divider()
@@ -216,12 +262,14 @@ with study_tab:
             st.session_state.current_pair = st.session_state.previous_pair
             st.session_state.previous_pair = None
             st.session_state.answered = set()
+            st.session_state.answer_choices = {}
             st.rerun()
     with nav3:
         if st.button("Next →", use_container_width=True):
             st.session_state.previous_pair = st.session_state.current_pair
             st.session_state.current_pair = df.sample(2).to_dict("records")
             st.session_state.answered = set()
+            st.session_state.answer_choices = {}
             st.rerun()
 
 # ── Question Bank tab ──
@@ -264,31 +312,38 @@ with database_tab:
             column_config={"Delete": st.column_config.CheckboxColumn("🗑", default=False)},
             key="attempts_editor",
         )
-        if st.button("Delete selected rows", key="del_attempts"):
+        adcol, accol, _ = st.columns([1, 1, 4])
+        with adcol:
+            del_attempts_clicked = st.button("Delete selected", key="del_attempts", use_container_width=True)
+        with accol:
+            clr_attempts_clicked = st.button("Clear All", key="clear_attempts_btn", use_container_width=True)
+        if del_attempts_clicked:
             ids = edited_attempts.loc[edited_attempts["Delete"], "id"].tolist()
             if ids:
                 conn.execute(f"DELETE FROM attempts WHERE id IN ({','.join(str(i) for i in ids)})")
                 conn.commit()
                 st.rerun()
-    else:
-        st.info("No attempts recorded yet.")
-
-    st.divider()
-    if not st.session_state.confirm_clear_attempts:
-        if st.button("Clear Attempts", key="clear_attempts_btn"):
+        if clr_attempts_clicked:
             st.session_state.confirm_clear_attempts = True
             st.rerun()
     else:
+        st.info("No attempts recorded yet.")
+        if st.button("Clear All", key="clear_attempts_btn"):
+            st.session_state.confirm_clear_attempts = True
+            st.rerun()
+
+    if st.session_state.confirm_clear_attempts:
         st.warning("This will delete all attempts. Are you sure?")
-        ca1, ca2 = st.columns([1, 5])
-        with ca1:
-            if st.button("Yes, clear", key="yes_clear_attempts"):
+        yca, nca, _ = st.columns([1, 1, 4])
+        with yca:
+            if st.button("Yes, clear", key="yes_clear_attempts", use_container_width=True):
                 conn.execute("DELETE FROM attempts")
+                conn.execute("DELETE FROM sqlite_sequence WHERE name='attempts'")
                 conn.commit()
                 st.session_state.confirm_clear_attempts = False
                 st.rerun()
-        with ca2:
-            if st.button("Cancel", key="cancel_clear_attempts"):
+        with nca:
+            if st.button("Cancel", key="cancel_clear_attempts", use_container_width=True):
                 st.session_state.confirm_clear_attempts = False
                 st.rerun()
 
@@ -307,35 +362,42 @@ with database_tab:
             column_config={"Delete": st.column_config.CheckboxColumn("🗑", default=False)},
             key="comparisons_editor",
         )
-        if st.button("Delete selected rows", key="del_comparisons"):
+        cdcol, cccol, _ = st.columns([1, 1, 4])
+        with cdcol:
+            del_comparisons_clicked = st.button("Delete selected", key="del_comparisons", use_container_width=True)
+        with cccol:
+            clr_comparisons_clicked = st.button("Clear All", key="clear_comparisons_btn", use_container_width=True)
+        if del_comparisons_clicked:
             ids = edited_comparisons.loc[edited_comparisons["Delete"], "id"].tolist()
             if ids:
                 conn.execute(f"DELETE FROM comparisons WHERE id IN ({','.join(str(i) for i in ids)})")
                 conn.commit()
                 st.rerun()
-    else:
-        st.info("No comparisons recorded yet.")
-
-    conn.close()
-
-    st.divider()
-    if not st.session_state.confirm_clear_comparisons:
-        if st.button("Clear Comparisons", key="clear_comparisons_btn"):
+        if clr_comparisons_clicked:
             st.session_state.confirm_clear_comparisons = True
             st.rerun()
     else:
+        st.info("No comparisons recorded yet.")
+        if st.button("Clear All", key="clear_comparisons_btn"):
+            st.session_state.confirm_clear_comparisons = True
+            st.rerun()
+
+    conn.close()
+
+    if st.session_state.confirm_clear_comparisons:
         st.warning("This will delete all comparisons. Are you sure?")
-        cc1, cc2 = st.columns([1, 5])
-        with cc1:
-            if st.button("Yes, clear", key="yes_clear_comparisons"):
+        ycc, ncc, _ = st.columns([1, 1, 4])
+        with ycc:
+            if st.button("Yes, clear", key="yes_clear_comparisons", use_container_width=True):
                 conn = get_conn(db_path)
                 conn.execute("DELETE FROM comparisons")
+                conn.execute("DELETE FROM sqlite_sequence WHERE name='comparisons'")
                 conn.commit()
                 conn.close()
                 st.session_state.confirm_clear_comparisons = False
                 st.rerun()
-        with cc2:
-            if st.button("Cancel", key="cancel_clear_comparisons"):
+        with ncc:
+            if st.button("Cancel", key="cancel_clear_comparisons", use_container_width=True):
                 st.session_state.confirm_clear_comparisons = False
                 st.rerun()
 
