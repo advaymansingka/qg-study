@@ -3,6 +3,7 @@ import sqlite3
 from datetime import datetime
 
 import pandas as pd
+from bradley_terry import bradley_terry_leaderboard
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -87,6 +88,7 @@ if st.session_state.get("active_qb") != qb:
     st.session_state.answered = set()
     st.session_state.pending_comparison = None
     st.session_state.compared_pairs = set()
+    st.session_state.bt_leaderboard = None
 
 # --- Load data ---
 df = pd.read_parquet(data_path).reset_index()
@@ -356,6 +358,20 @@ with qbank_tab:
             st.caption(f"{count} attempt{'s' if count != 1 else ''} · Last: {last_str}")
         else:
             st.caption("No attempts yet")
+
+    # ── Difficulty Leaderboard ──
+    st.divider()
+    if st.button("Generate Leaderboard", key="gen_leaderboard", use_container_width=False):
+        with st.spinner("Running Bradley-Terry model..."):
+            st.session_state.bt_leaderboard = bradley_terry_leaderboard(db_path, data_path)
+
+    if st.session_state.get("bt_leaderboard") is not None:
+        st.subheader("Difficulty Leaderboard")
+        st.dataframe(
+            st.session_state.bt_leaderboard,
+            hide_index=True,
+            use_container_width=True,
+        )
 
 # ── Analytics tab ──
 with analytics_tab:

@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python3 -c \":*)"
+      "Bash(python3 -c \":*)",
+      "Bash(sqlite3:*)",
+      "Bash(python3 -c \"import pandas as pd; df = pd.read_parquet\\(''data/example.parquet''\\).reset_index\\(\\); print\\(df[[''index'',''name'']].to_string\\(\\)\\)\")"
     ]
   }
 }
