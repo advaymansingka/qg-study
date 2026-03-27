@@ -1,3 +1,5 @@
+import glob
+import os
 import random
 import sqlite3
 from datetime import datetime
@@ -64,9 +66,11 @@ if not st.session_state.logged_in:
     _, login_col, _ = st.columns([2, 1, 2])
     with login_col:
         st.title("Login")
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        if st.button("Login", use_container_width=True):
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Login", use_container_width=True)
+        if submitted:
             if username == USERNAME and password == PASSWORD:
                 st.session_state.logged_in = True
                 st.rerun()
@@ -89,6 +93,13 @@ if st.session_state.get("active_qb") != qb:
     st.session_state.pending_comparison = None
     st.session_state.compared_pairs = set()
     st.session_state.bt_leaderboard = None
+    st.session_state.bt_leaderboard_ts = None
+    _lb_files = sorted(glob.glob(f"leaderboard/lb_{qb}_*.parquet"))
+    if _lb_files:
+        _latest = _lb_files[-1]
+        st.session_state.bt_leaderboard = pd.read_parquet(_latest)
+        _ts_str = _latest.rsplit("_", 2)[-2] + "_" + _latest.rsplit("_", 1)[-1].replace(".parquet", "")
+        st.session_state.bt_leaderboard_ts = datetime.strptime(_ts_str, "%Y%m%d_%H%M%S")
 
 # --- Load data ---
 df = pd.read_parquet(data_path).reset_index()
@@ -363,7 +374,17 @@ with qbank_tab:
     st.divider()
     if st.button("Generate Leaderboard", key="gen_leaderboard", use_container_width=False):
         with st.spinner("Running Bradley-Terry model..."):
-            st.session_state.bt_leaderboard = bradley_terry_leaderboard(db_path, data_path)
+            lb = bradley_terry_leaderboard(db_path, data_path)
+            st.session_state.bt_leaderboard = lb
+            now = datetime.now()
+            st.session_state.bt_leaderboard_ts = now
+            os.makedirs("leaderboard", exist_ok=True)
+            fname = f"leaderboard/lb_{qb}_{now.strftime('%Y%m%d_%H%M%S')}.parquet"
+            lb.to_parquet(fname, index=False)
+
+    if st.session_state.get("bt_leaderboard_ts") is not None:
+        ts = st.session_state.bt_leaderboard_ts
+        st.caption(f"Last generated: {ts.strftime('%b %d, %Y  %I:%M %p')}")
 
     if st.session_state.get("bt_leaderboard") is not None:
         st.subheader("Difficulty Leaderboard")
