@@ -16,8 +16,6 @@ import streamlit.components.v1 as components
 
 st.set_page_config(layout="wide", page_title="QG Study", page_icon=":books:")
 
-USERNAME = "user"
-PASSWORD = "pass123"
 
 # --- DB setup ---
 def get_conn(db_path):
@@ -76,7 +74,8 @@ if not st.session_state.logged_in:
             password = st.text_input("Password", type="password")
             submitted = st.form_submit_button("Login", use_container_width=True)
         if submitted:
-            if username == USERNAME and password == PASSWORD:
+            users = st.secrets.get("users", {"user": "pass123"})
+            if username in users and users[username] == password:
                 st.session_state.logged_in = True
                 st.rerun()
             else:
