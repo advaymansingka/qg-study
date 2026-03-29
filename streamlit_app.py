@@ -74,7 +74,7 @@ if not st.session_state.logged_in:
             password = st.text_input("Password", type="password")
             submitted = st.form_submit_button("Login", use_container_width=True)
         if submitted:
-            users = st.secrets.get("users", {"user": "pass123"})
+            users = st.secrets.get("users", {"user": "user"})
             if username in users and users[username] == password:
                 st.session_state.logged_in = True
                 st.rerun()
