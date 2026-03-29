@@ -83,7 +83,7 @@ if not st.session_state.logged_in:
     st.stop()
 
 # --- Active QB (set from Question Bank tab) ---
-qb = st.session_state.get("active_qb", "example")
+qb = st.session_state.get("active_qb", "qg")
 
 db_path = f"db/history_{qb}.db"
 data_path = f"data/{qb}.parquet"
