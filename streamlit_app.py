@@ -16,6 +16,7 @@ import streamlit.components.v1 as components
 
 st.set_page_config(layout="wide", page_title="QG Study", page_icon=":books:")
 
+TOPICS = ["brainteaser", "stochastic calculus", "probability", "statistics", "machine learning"]
 
 # --- DB setup ---
 def get_conn(db_path):
@@ -26,9 +27,14 @@ def get_conn(db_path):
             question_index INTEGER,
             question_name TEXT,
             result TEXT,
-            timestamp TEXT
+            timestamp TEXT,
+            username TEXT
         )
     """)
+    try:
+        conn.execute("ALTER TABLE attempts ADD COLUMN username TEXT")
+    except Exception:
+        pass
     conn.execute("""
         CREATE TABLE IF NOT EXISTS comparisons (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,14 +46,53 @@ def get_conn(db_path):
             timestamp TEXT
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS question_topics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            question_index INTEGER,
+            topic TEXT
+        )
+    """)
     conn.commit()
     return conn
 
-def log_attempt(db_path, question_index, question_name, result):
+def log_attempt(db_path, question_index, question_name, result, username=""):
     conn = get_conn(db_path)
     conn.execute(
-        "INSERT INTO attempts (question_index, question_name, result, timestamp) VALUES (?, ?, ?, ?)",
-        (question_index, question_name, result, datetime.now().isoformat())
+        "INSERT INTO attempts (question_index, question_name, result, timestamp, username) VALUES (?, ?, ?, ?, ?)",
+        (question_index, question_name, result, datetime.now().isoformat(), username)
+    )
+    conn.commit()
+    conn.close()
+
+def get_topics(db_path, question_index):
+    conn = get_conn(db_path)
+    rows = conn.execute(
+        "SELECT topic FROM question_topics WHERE question_index = ? ORDER BY topic",
+        (int(question_index),)
+    ).fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+def add_topic(db_path, question_index, topic):
+    conn = get_conn(db_path)
+    existing = conn.execute(
+        "SELECT 1 FROM question_topics WHERE question_index = ? AND topic = ?",
+        (int(question_index), topic)
+    ).fetchone()
+    if not existing:
+        conn.execute(
+            "INSERT INTO question_topics (question_index, topic) VALUES (?, ?)",
+            (int(question_index), topic)
+        )
+        conn.commit()
+    conn.close()
+
+def remove_topic(db_path, question_index, topic):
+    conn = get_conn(db_path)
+    conn.execute(
+        "DELETE FROM question_topics WHERE question_index = ? AND topic = ?",
+        (int(question_index), topic)
     )
     conn.commit()
     conn.close()
@@ -64,6 +109,8 @@ def log_comparison(db_path, row_a, row_b, result):
 # --- Login ---
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
+if "username" not in st.session_state:
+    st.session_state.username = ""
 
 if not st.session_state.logged_in:
     _, login_col, _ = st.columns([2, 1, 2])
@@ -77,6 +124,7 @@ if not st.session_state.logged_in:
             users = st.secrets.get("users", {"user": "user"})
             if username in users and users[username] == password:
                 st.session_state.logged_in = True
+                st.session_state.username = username
                 st.rerun()
             else:
                 st.error("Invalid credentials")
@@ -129,6 +177,8 @@ if "comparison_chosen" not in st.session_state:
     st.session_state.comparison_chosen = {}
 if "qbank_pos" not in st.session_state:
     st.session_state.qbank_pos = 0
+if "qbank_topic_filter" not in st.session_state:
+    st.session_state.qbank_topic_filter = ""
 
 # --- Comparison dialog ---
 @st.dialog("Confirm Comparison")
@@ -201,6 +251,20 @@ with study_tab:
             st.markdown(row["prompt"])
             with st.expander("Explanation"):
                 st.markdown(row["explanation"])
+            with st.expander("Show Topics"):
+                current_topics = get_topics(db_path, idx)
+                for topic in current_topics:
+                    tcol1, tcol2 = st.columns([4, 1])
+                    tcol1.write(topic.title())
+                    if tcol2.button("✕", key=f"rm_{idx}_{topic}"):
+                        remove_topic(db_path, idx, topic)
+                        st.rerun()
+                available = [t for t in TOPICS if t not in current_topics]
+                if available:
+                    new_topic = st.selectbox("Add topic", [""] + available, key=f"add_topic_{idx}", format_func=str.title)
+                    if new_topic:
+                        add_topic(db_path, idx, new_topic)
+                        st.rerun()
 
             already_answered = idx in st.session_state.answered
             chosen = st.session_state.answer_choices.get(idx)
@@ -220,13 +284,13 @@ with study_tab:
             else:
                 with bcol1:
                     if st.button("✓ Correct", key=f"correct_{idx}", type="primary", use_container_width=True):
-                        log_attempt(db_path, idx, row["name"], "correct")
+                        log_attempt(db_path, idx, row["name"], "correct", st.session_state.get("username", ""))
                         st.session_state.answered.add(idx)
                         st.session_state.answer_choices[idx] = "correct"
                         st.rerun()
                 with bcol2:
                     if st.button("✗ Wrong", key=f"wrong_{idx}", use_container_width=True):
-                        log_attempt(db_path, idx, row["name"], "wrong")
+                        log_attempt(db_path, idx, row["name"], "wrong", st.session_state.get("username", ""))
                         st.session_state.answered.add(idx)
                         st.session_state.answer_choices[idx] = "wrong"
                         st.rerun()
@@ -312,11 +376,30 @@ with qbank_tab:
         st.session_state.active_qb = new_qb
         st.rerun()
 
-    filtered_df = df.reset_index(drop=True)
-    total_all = len(df)
-    total_filtered = total_all
+    topic_filter = st.selectbox(
+        "Filter by topic",
+        [""] + TOPICS,
+        key="qbank_topic_filter",
+        format_func=lambda t: "All Topics" if t == "" else t.title()
+    )
 
-    st.caption(f"{total_all} questions")
+    filtered_df = df.reset_index(drop=True)
+    if topic_filter:
+        conn_f = sqlite3.connect(db_path)
+        topic_idxs = pd.read_sql(
+            "SELECT question_index FROM question_topics WHERE topic = ?",
+            conn_f, params=(topic_filter,)
+        )["question_index"].tolist()
+        conn_f.close()
+        filtered_df = filtered_df[filtered_df["index"].isin(topic_idxs)].reset_index(drop=True)
+
+    total_all = len(df)
+    total_filtered = len(filtered_df)
+
+    if topic_filter:
+        st.caption(f"{total_filtered} of {total_all} questions")
+    else:
+        st.caption(f"{total_all} questions")
 
     if total_filtered == 0:
         st.warning("No questions available.")
@@ -359,6 +442,23 @@ with qbank_tab:
         with st.expander("Explanation"):
             st.markdown(row["explanation"])
 
+        # ── Topics ──
+        with st.expander("Show Topics"):
+            qb_idx = int(row["index"])
+            current_topics = get_topics(db_path, qb_idx)
+            for topic in current_topics:
+                tcol1, tcol2 = st.columns([4, 1])
+                tcol1.write(topic.title())
+                if tcol2.button("✕", key=f"qb_rm_{qb_idx}_{topic}"):
+                    remove_topic(db_path, qb_idx, topic)
+                    st.rerun()
+            available = [t for t in TOPICS if t not in current_topics]
+            if available:
+                new_topic = st.selectbox("Add topic", [""] + available, key=f"qb_add_topic_{qb_idx}", format_func=str.title)
+                if new_topic:
+                    add_topic(db_path, qb_idx, new_topic)
+                    st.rerun()
+
         # ── Attempt history ──
         conn = get_conn(db_path)
         attempt_row = conn.execute(
@@ -400,10 +500,16 @@ with qbank_tab:
 
 # ── Analytics tab ──
 with analytics_tab:
+    current_user = st.session_state.get("username", "")
+
     conn = get_conn(db_path)
     attempts_per_day = pd.read_sql_query(
-        "SELECT date(timestamp) AS day, COUNT(*) AS count FROM attempts GROUP BY day ORDER BY day",
-        conn
+        "SELECT date(timestamp) AS day, COUNT(*) AS count FROM attempts WHERE username = ? GROUP BY day ORDER BY day",
+        conn, params=(current_user,)
+    )
+    accuracy_raw = pd.read_sql_query(
+        "SELECT date(timestamp) AS day, result FROM attempts WHERE username = ?",
+        conn, params=(current_user,)
     )
     conn.close()
 
@@ -428,6 +534,14 @@ with analytics_tab:
     # Windowed data for metrics + chart
     windowed = attempts_per_day[attempts_per_day['day'] >= window_start.strftime('%Y-%m-%d')]
     total_attempts = int(windowed['count'].sum())
+
+    # Build per-day accuracy series over the full date window
+    acc_daily = (
+        accuracy_raw.groupby("day")["result"]
+        .apply(lambda r: (r == "correct").sum() / len(r))
+        .reindex(pd.date_range(window_start, today_d, freq="D").strftime("%Y-%m-%d"), fill_value=np.nan)
+    )
+    acc_rolled = acc_daily.rolling(5, min_periods=1).mean()
 
     if total_attempts == 0:
         st.info("No attempts recorded in this period. Start studying to see your activity.")
@@ -507,6 +621,30 @@ with analytics_tab:
         )
 
         st.plotly_chart(fig, use_container_width=True)
+
+        st.subheader("Accuracy (5-day rolling)")
+        acc_fig = go.Figure(go.Scatter(
+            x=acc_rolled.index.tolist(),
+            y=acc_rolled.values.tolist(),
+            mode="lines",
+            line=dict(color="#0d6efd", width=2),
+            hovertemplate="%{x}: %{y:.0%}<extra></extra>",
+        ))
+        acc_fig.update_layout(
+            xaxis=dict(
+                range=[window_start.strftime("%Y-%m-%d"), today_d.strftime("%Y-%m-%d")],
+                showgrid=False, zeroline=False, fixedrange=True,
+            ),
+            yaxis=dict(
+                tickformat=".0%", range=[0, 1],
+                showgrid=True, zeroline=False, fixedrange=True,
+            ),
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+            margin=dict(l=45, r=10, t=35, b=30),
+            height=200,
+        )
+        st.plotly_chart(acc_fig, use_container_width=True)
 
 # ── Database tab ──
 with database_tab:
