@@ -307,7 +307,7 @@ setTimeout(styleWrongBtns, 100);
 
 # ── Question Bank tab ──
 with qbank_tab:
-    qb_options = ["example"]
+    qb_options = ["example", "qg"]
     new_qb = st.selectbox("Question Bank", qb_options, index=qb_options.index(qb), key="qb_selector", format_func=str.title)
     if new_qb != qb:
         st.session_state.active_qb = new_qb
