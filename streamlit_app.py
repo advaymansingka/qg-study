@@ -2,10 +2,15 @@ import glob
 import os
 import random
 import sqlite3
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 import pandas as pd
+
+import plotly.graph_objects as go
+import numpy as np
+
 from bradley_terry import bradley_terry_leaderboard
+
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -396,7 +401,113 @@ with qbank_tab:
 
 # ── Analytics tab ──
 with analytics_tab:
-    st.info("Analytics coming soon")
+    conn = get_conn(db_path)
+    attempts_per_day = pd.read_sql_query(
+        "SELECT date(timestamp) AS day, COUNT(*) AS count FROM attempts GROUP BY day ORDER BY day",
+        conn
+    )
+    conn.close()
+
+    months = st.radio(
+        "Time window", [3, 6, 12, 24], index=0,
+        format_func=lambda m: f"{m} months", horizontal=True
+    )
+
+    today_d = date.today()
+    window_start = today_d - timedelta(days=30 * months)
+
+    # Full history for streak calculation
+    all_days = set(attempts_per_day['day'].tolist())
+    streak = 0
+    for i in range(730):
+        ds = (today_d - timedelta(days=i)).strftime('%Y-%m-%d')
+        if ds in all_days:
+            streak += 1
+        else:
+            break
+
+    # Windowed data for metrics + chart
+    windowed = attempts_per_day[attempts_per_day['day'] >= window_start.strftime('%Y-%m-%d')]
+    total_attempts = int(windowed['count'].sum())
+
+    if total_attempts == 0:
+        st.info("No attempts recorded in this period. Start studying to see your activity.")
+    else:
+        active_days = int((windowed['count'] > 0).sum())
+        best_row = windowed.loc[windowed['count'].idxmax()]
+        best_day_count = int(best_row['count'])
+        best_day_date  = best_row['day']
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total Attempts", total_attempts)
+        m2.metric("Active Days", active_days)
+        m3.metric("Current Streak", f"{streak} day{'s' if streak != 1 else ''}")
+        m4.metric("Best Day", f"{best_day_count} on {best_day_date}")
+
+        st.divider()
+        st.subheader(f"Activity — Last {months} Months")
+
+        count_lookup = dict(zip(windowed['day'], windowed['count'].astype(int)))
+        all_dates = pd.date_range(start=window_start, end=today_d, freq='D')
+        start_offset = window_start.weekday()  # 0=Mon
+        total_weeks = (len(all_dates) + start_offset + 6) // 7
+        max_count = max(count_lookup.values()) if count_lookup else 1
+
+        z = np.full((7, total_weeks), np.nan)
+        hover_text = np.full((7, total_weeks), '', dtype=object)
+
+        month_annotations = []
+        seen_months = set()
+        for i, d in enumerate(all_dates):
+            dow = d.weekday()
+            week_col = (i + start_offset) // 7
+            ds = d.strftime('%Y-%m-%d')
+            count = count_lookup.get(ds, 0)
+            z[dow, week_col] = count
+            hover_text[dow, week_col] = f"{ds}: {count} attempt{'s' if count != 1 else ''}"
+            key = (d.year, d.month)
+            if key not in seen_months:
+                seen_months.add(key)
+                month_annotations.append(dict(
+                    x=week_col, y=1.18,
+                    xref='x', yref='paper',
+                    text=d.strftime('%b'),
+                    showarrow=False, xanchor='left', yanchor='bottom',
+                    font=dict(size=10, color='#555'),
+                ))
+
+        colorscale = [[0, '#e0e0e0'], [0.0001, '#c6e48b'], [0.5, '#239a3b'], [1.0, '#196127']]
+
+        fig = go.Figure(go.Heatmap(
+            z=z,
+            x=list(range(total_weeks)),
+            y=['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+            xgap=4,
+            ygap=4,
+            colorscale=colorscale,
+            zmin=0,
+            zmax=max_count,
+            showscale=False,
+            text=hover_text,
+            hovertemplate='%{text}<extra></extra>',
+        ))
+
+        fig.update_layout(
+            annotations=month_annotations,
+            xaxis=dict(showticklabels=False, showgrid=False, zeroline=False, fixedrange=True),
+            yaxis=dict(
+                autorange='reversed',
+                tickvals=['Mon', 'Wed', 'Fri', 'Sun'],
+                showgrid=False, zeroline=False,
+                tickfont=dict(size=10), fixedrange=True,
+            ),
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            margin=dict(l=35, r=10, t=35, b=10),
+            height=200,
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
 
 # ── Database tab ──
 with database_tab:
